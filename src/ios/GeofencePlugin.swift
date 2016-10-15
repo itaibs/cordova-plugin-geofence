@@ -10,13 +10,8 @@ import Foundation
 import AudioToolbox
 import WebKit
 
-let TAG = "GeofencePlugin"
 let iOS8 = floor(NSFoundationVersionNumber) > floor(NSFoundationVersionNumber_iOS_7_1)
 let iOS7 = floor(NSFoundationVersionNumber) <= floor(NSFoundationVersionNumber_iOS_7_1)
-
-func log(message: String){
-    NSLog("%@ - %@", TAG, message)
-}
 
 @available(iOS 8.0, *)
 @objc(HWPGeofencePlugin) class GeofencePlugin : CDVPlugin {
