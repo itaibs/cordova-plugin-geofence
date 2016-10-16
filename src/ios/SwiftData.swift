@@ -1,2151 +1,1378 @@
+//  SwiftyJSON.swift
 //
-// SwiftData.swift
+//  Copyright (c) 2014 Ruoyu Fu, Pinglin Tang
 //
-// Copyright (c) 2014 Ryan Fowler
+//  Permission is hereby granted, free of charge, to any person obtaining a copy
+//  of this software and associated documentation files (the "Software"), to deal
+//  in the Software without restriction, including without limitation the rights
+//  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+//  copies of the Software, and to permit persons to whom the Software is
+//  furnished to do so, subject to the following conditions:
 //
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
+//  The above copyright notice and this permission notice shall be included in
+//  all copies or substantial portions of the Software.
 //
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-
+//  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+//  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+//  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+//  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+//  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+//  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+//  THE SOFTWARE.
 
 import Foundation
-import UIKit
 
+// MARK: - Error
 
-// MARK: - SwiftData
+///Error domain
+public let ErrorDomain: String = "SwiftyJSONErrorDomain"
 
-public struct SwiftData {
+///Error code
+public let ErrorUnsupportedType: Int = 999
+public let ErrorIndexOutOfBounds: Int = 900
+public let ErrorWrongType: Int = 901
+public let ErrorNotExist: Int = 500
+public let ErrorInvalidJSON: Int = 490
 
+// MARK: - JSON Type
 
-    // MARK: - Public SwiftData Functions
+/**
+JSON's type definitions.
 
+See http://www.json.org
+*/
+public enum Type :Int{
 
-    // MARK: - Execute Statements
+    case Number
+    case String
+    case Bool
+    case Array
+    case Dictionary
+    case Null
+    case Unknown
+}
+
+// MARK: - JSON Base
+
+public struct JSON {
 
     /**
-    Execute a non-query SQL statement (e.g. INSERT, UPDATE, DELETE, etc.)
+    Creates a JSON using the data.
 
-    This function will execute the provided SQL and return an Int with the error code, or nil if there was no error.
-    It is recommended to always verify that the return value is nil to ensure that the operation was successful.
+    - parameter data:  The NSData used to convert to json.Top level object in data is an NSArray or NSDictionary
+    - parameter opt:   The JSON serialization reading options. `.AllowFragments` by default.
+    - parameter error: error The NSErrorPointer used to return the error. `nil` by default.
 
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - parameter sqlStr:  The non-query string of SQL to be executed (INSERT, UPDATE, DELETE, etc.)
-
-    - returns:       An Int with the error code, or nil if there was no error
+    - returns: The created JSON
     */
-    public static func executeChange(sqlStr: String) -> Int? {
-
-        //create error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
+    public init(data:NSData, options opt: NSJSONReadingOptions = .AllowFragments, error: NSErrorPointer = nil) {
+        do {
+            let object: AnyObject = try NSJSONSerialization.JSONObjectWithData(data, options: opt)
+            self.init(object)
+        } catch let aError as NSError {
+            if error != nil {
+                error.memory = aError
             }
-
-            //execute the change statement
-            error = SQLiteDB.sharedInstance.executeChange(sqlStr)
-
-            //close database connection
-            SQLiteDB.sharedInstance.close()
-
+            self.init(NSNull())
         }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
     }
 
     /**
-    Execute a non-query SQL statement (e.g. INSERT, UPDATE, DELETE, etc.) along with arguments to be bound to the characters "?" (for values) and "i?" (for identifiers e.g. table or column names).
+     Create a JSON from JSON string
+    - parameter string: Normal json string like '{"a":"b"}'
 
-    The objects in the provided array of arguments will be bound, in order, to the "i?" and "?" characters in the SQL string.
-    The quantity of "i?"s and "?"s in the SQL string must be equal to the quantity of arguments provided.
-    Objects that are to bind as an identifier ("i?") must be of type String.
-    Identifiers should be bound and escaped if provided by the user.
-    If "nil" is provided as an argument, the NULL value will be bound to the appropriate value in the SQL string.
-    For more information on how the objects will be escaped, refer to the functions "escapeValue()" and "escapeIdentifier()".
-    Note that the "escapeValue()" and "escapeIdentifier()" include the necessary quotations ' ' or " " to the arguments when being bound to the SQL.
-
-    It is recommended to always verify that the return value is nil to ensure that the operation was successful.
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - binding errors (201 - 203)
-
-    - parameter sqlStr:    The non-query string of SQL to be executed (INSERT, UPDATE, DELETE, etc.)
-    - parameter withArgs:  An array of objects to bind to the "?" and "i?" characters in the sqlStr
-
-    - returns:         An Int with the error code, or nil if there was no error
+    - returns: The created JSON
     */
-    public static func executeChange(sqlStr: String, withArgs: [AnyObject]) -> Int? {
-
-        //create success variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the change statement
-            error = SQLiteDB.sharedInstance.executeChange(sqlStr, withArgs: withArgs)
-
-            //close database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
+    public static func parse(string:String) -> JSON {
+        return string.dataUsingEncoding(NSUTF8StringEncoding)
+            .flatMap({JSON(data: $0)}) ?? JSON(NSNull())
     }
 
     /**
-    Execute multiple SQL statements (non-queries e.g. INSERT, UPDATE, DELETE, etc.)
+    Creates a JSON using the object.
 
-    This function will execute each SQL statment in the provided array, in order, and return an Int with the error code, or nil if there was no error.
+    - parameter object:  The object must have the following properties: All objects are NSString/String, NSNumber/Int/Float/Double/Bool, NSArray/Array, NSDictionary/Dictionary, or NSNull; All dictionary keys are NSStrings/String; NSNumbers are not NaN or infinity.
 
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - parameter sqlArr:  An array of non-query strings of SQL to be executed (INSERT, UPDATE, DELETE, etc.)
-
-    - returns:       An Int with the error code, or nil if there was no error
+    - returns: The created JSON
     */
-    public static func executeMultipleChanges(sqlArr: [String]) -> Int? {
+    public init(_ object: AnyObject) {
+        self.object = object
+    }
 
-        //create error variable
-        var error: Int? = nil
+    /**
+    Creates a JSON from a [JSON]
 
-        //create task closure
-        let task: ()->Void = {
+    - parameter jsonArray: A Swift array of JSON objects
 
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
+    - returns: The created JSON
+    */
+    public init(_ jsonArray:[JSON]) {
+        self.init(jsonArray.map { $0.object })
+    }
+
+    /**
+    Creates a JSON from a [String: JSON]
+
+    - parameter jsonDictionary: A Swift dictionary of JSON objects
+
+    - returns: The created JSON
+    */
+    public init(_ jsonDictionary:[String: JSON]) {
+        var dictionary = [String: AnyObject](minimumCapacity: jsonDictionary.count)
+        for (key, json) in jsonDictionary {
+            dictionary[key] = json.object
+        }
+        self.init(dictionary)
+    }
+
+    /// Private object
+    private var rawArray: [AnyObject] = []
+    private var rawDictionary: [String : AnyObject] = [:]
+    private var rawString: String = ""
+    private var rawNumber: NSNumber = 0
+    private var rawNull: NSNull = NSNull()
+    /// Private type
+    private var _type: Type = .Null
+    /// prviate error
+    private var _error: NSError? = nil
+
+    /// Object in JSON
+    public var object: AnyObject {
+        get {
+            switch self.type {
+            case .Array:
+                return self.rawArray
+            case .Dictionary:
+                return self.rawDictionary
+            case .String:
+                return self.rawString
+            case .Number:
+                return self.rawNumber
+            case .Bool:
+                return self.rawNumber
+            default:
+                return self.rawNull
             }
+        }
+        set {
+            _error = nil
+            switch newValue {
+            case let number as NSNumber:
+                if number.isBool {
+                    _type = .Bool
+                } else {
+                    _type = .Number
+                }
+                self.rawNumber = number
+            case  let string as String:
+                _type = .String
+                self.rawString = string
+            case  _ as NSNull:
+                _type = .Null
+            case let array as [AnyObject]:
+                _type = .Array
+                self.rawArray = array
+            case let dictionary as [String : AnyObject]:
+                _type = .Dictionary
+                self.rawDictionary = dictionary
+            default:
+                _type = .Unknown
+                _error = NSError(domain: ErrorDomain, code: ErrorUnsupportedType, userInfo: [NSLocalizedDescriptionKey: "It is a unsupported type"])
+            }
+        }
+    }
 
-            //execute the change statements
-            for sqlStr in sqlArr {
-                if let err = SQLiteDB.sharedInstance.executeChange(sqlStr) {
-                    SQLiteDB.sharedInstance.close()
-                    if let index = sqlArr.indexOf(sqlStr) {
-                        print("Error occurred on array item: \(index) -> \"\(sqlStr)\"")
-                    }
-                    error = err
-                    return
+    /// json type
+    public var type: Type { get { return _type } }
+
+    /// Error in JSON
+    public var error: NSError? { get { return self._error } }
+
+    /// The static null json
+    @available(*, unavailable, renamed="null")
+    public static var nullJSON: JSON { get { return null } }
+    public static var null: JSON { get { return JSON(NSNull()) } }
+}
+
+// MARK: - CollectionType, SequenceType, Indexable
+extension JSON : Swift.CollectionType, Swift.SequenceType, Swift.Indexable {
+
+    public typealias Generator = JSONGenerator
+
+    public typealias Index = JSONIndex
+
+    public var startIndex: JSON.Index {
+        switch self.type {
+        case .Array:
+            return JSONIndex(arrayIndex: self.rawArray.startIndex)
+        case .Dictionary:
+            return JSONIndex(dictionaryIndex: self.rawDictionary.startIndex)
+        default:
+            return JSONIndex()
+        }
+    }
+
+    public var endIndex: JSON.Index {
+        switch self.type {
+        case .Array:
+            return JSONIndex(arrayIndex: self.rawArray.endIndex)
+        case .Dictionary:
+            return JSONIndex(dictionaryIndex: self.rawDictionary.endIndex)
+        default:
+            return JSONIndex()
+        }
+    }
+
+    public subscript (position: JSON.Index) -> JSON.Generator.Element {
+        switch self.type {
+        case .Array:
+            return (String(position.arrayIndex), JSON(self.rawArray[position.arrayIndex!]))
+        case .Dictionary:
+            let (key, value) = self.rawDictionary[position.dictionaryIndex!]
+            return (key, JSON(value))
+        default:
+            return ("", JSON.null)
+        }
+    }
+
+    /// If `type` is `.Array` or `.Dictionary`, return `array.isEmpty` or `dictonary.isEmpty` otherwise return `true`.
+    public var isEmpty: Bool {
+        get {
+            switch self.type {
+            case .Array:
+                return self.rawArray.isEmpty
+            case .Dictionary:
+                return self.rawDictionary.isEmpty
+            default:
+                return true
+            }
+        }
+    }
+
+    /// If `type` is `.Array` or `.Dictionary`, return `array.count` or `dictonary.count` otherwise return `0`.
+    public var count: Int {
+        switch self.type {
+        case .Array:
+            return self.rawArray.count
+        case .Dictionary:
+            return self.rawDictionary.count
+        default:
+            return 0
+        }
+    }
+
+    public func underestimateCount() -> Int {
+        switch self.type {
+        case .Array:
+            return self.rawArray.underestimateCount()
+        case .Dictionary:
+            return self.rawDictionary.underestimateCount()
+        default:
+            return 0
+        }
+    }
+
+    /**
+    If `type` is `.Array` or `.Dictionary`, return a generator over the elements like `Array` or `Dictionary`, otherwise return a generator over empty.
+
+    - returns: Return a *generator* over the elements of JSON.
+    */
+    public func generate() -> JSON.Generator {
+        return JSON.Generator(self)
+    }
+}
+
+public struct JSONIndex: ForwardIndexType, _Incrementable, Equatable, Comparable {
+
+    let arrayIndex: Int?
+    let dictionaryIndex: DictionaryIndex<String, AnyObject>?
+
+    let type: Type
+
+    init(){
+        self.arrayIndex = nil
+        self.dictionaryIndex = nil
+        self.type = .Unknown
+    }
+
+    init(arrayIndex: Int) {
+        self.arrayIndex = arrayIndex
+        self.dictionaryIndex = nil
+        self.type = .Array
+    }
+
+    init(dictionaryIndex: DictionaryIndex<String, AnyObject>) {
+        self.arrayIndex = nil
+        self.dictionaryIndex = dictionaryIndex
+        self.type = .Dictionary
+    }
+
+    public func successor() -> JSONIndex {
+        switch self.type {
+        case .Array:
+            return JSONIndex(arrayIndex: self.arrayIndex!.successor())
+        case .Dictionary:
+            return JSONIndex(dictionaryIndex: self.dictionaryIndex!.successor())
+        default:
+            return JSONIndex()
+        }
+    }
+}
+
+public func ==(lhs: JSONIndex, rhs: JSONIndex) -> Bool {
+    switch (lhs.type, rhs.type) {
+    case (.Array, .Array):
+        return lhs.arrayIndex == rhs.arrayIndex
+    case (.Dictionary, .Dictionary):
+        return lhs.dictionaryIndex == rhs.dictionaryIndex
+    default:
+        return false
+    }
+}
+
+public func <(lhs: JSONIndex, rhs: JSONIndex) -> Bool {
+    switch (lhs.type, rhs.type) {
+    case (.Array, .Array):
+        return lhs.arrayIndex < rhs.arrayIndex
+    case (.Dictionary, .Dictionary):
+        return lhs.dictionaryIndex < rhs.dictionaryIndex
+    default:
+        return false
+    }
+}
+
+public func <=(lhs: JSONIndex, rhs: JSONIndex) -> Bool {
+    switch (lhs.type, rhs.type) {
+    case (.Array, .Array):
+        return lhs.arrayIndex <= rhs.arrayIndex
+    case (.Dictionary, .Dictionary):
+        return lhs.dictionaryIndex <= rhs.dictionaryIndex
+    default:
+        return false
+    }
+}
+
+public func >=(lhs: JSONIndex, rhs: JSONIndex) -> Bool {
+    switch (lhs.type, rhs.type) {
+    case (.Array, .Array):
+        return lhs.arrayIndex >= rhs.arrayIndex
+    case (.Dictionary, .Dictionary):
+        return lhs.dictionaryIndex >= rhs.dictionaryIndex
+    default:
+        return false
+    }
+}
+
+public func >(lhs: JSONIndex, rhs: JSONIndex) -> Bool {
+    switch (lhs.type, rhs.type) {
+    case (.Array, .Array):
+        return lhs.arrayIndex > rhs.arrayIndex
+    case (.Dictionary, .Dictionary):
+        return lhs.dictionaryIndex > rhs.dictionaryIndex
+    default:
+        return false
+    }
+}
+
+public struct JSONGenerator : GeneratorType {
+
+    public typealias Element = (String, JSON)
+
+    private let type: Type
+    private var dictionayGenerate: DictionaryGenerator<String, AnyObject>?
+    private var arrayGenerate: IndexingGenerator<[AnyObject]>?
+    private var arrayIndex: Int = 0
+
+    init(_ json: JSON) {
+        self.type = json.type
+        if type == .Array {
+            self.arrayGenerate = json.rawArray.generate()
+        }else {
+            self.dictionayGenerate = json.rawDictionary.generate()
+        }
+    }
+
+    public mutating func next() -> JSONGenerator.Element? {
+        switch self.type {
+        case .Array:
+            if let o = self.arrayGenerate?.next() {
+                let i = self.arrayIndex
+                self.arrayIndex += 1
+                return (String(i), JSON(o))
+            } else {
+                return nil
+            }
+        case .Dictionary:
+            if let (k, v): (String, AnyObject) = self.dictionayGenerate?.next() {
+                return (k, JSON(v))
+            } else {
+                return nil
+            }
+        default:
+            return nil
+        }
+    }
+}
+
+// MARK: - Subscript
+
+/**
+*  To mark both String and Int can be used in subscript.
+*/
+public enum JSONKey {
+    case Index(Int)
+    case Key(String)
+}
+
+public protocol JSONSubscriptType {
+    var jsonKey:JSONKey { get }
+}
+
+extension Int: JSONSubscriptType {
+    public var jsonKey:JSONKey {
+        return JSONKey.Index(self)
+    }
+}
+
+extension String: JSONSubscriptType {
+    public var jsonKey:JSONKey {
+        return JSONKey.Key(self)
+    }
+}
+
+extension JSON {
+
+    /// If `type` is `.Array`, return json whose object is `array[index]`, otherwise return null json with error.
+    private subscript(index index: Int) -> JSON {
+        get {
+            if self.type != .Array {
+                var r = JSON.null
+                r._error = self._error ?? NSError(domain: ErrorDomain, code: ErrorWrongType, userInfo: [NSLocalizedDescriptionKey: "Array[\(index)] failure, It is not an array"])
+                return r
+            } else if index >= 0 && index < self.rawArray.count {
+                return JSON(self.rawArray[index])
+            } else {
+                var r = JSON.null
+                r._error = NSError(domain: ErrorDomain, code:ErrorIndexOutOfBounds , userInfo: [NSLocalizedDescriptionKey: "Array[\(index)] is out of bounds"])
+                return r
+            }
+        }
+        set {
+            if self.type == .Array {
+                if self.rawArray.count > index && newValue.error == nil {
+                    self.rawArray[index] = newValue.object
                 }
             }
-
-            //close database connection
-            SQLiteDB.sharedInstance.close()
-
         }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
     }
 
-    /**
-    Execute a SQLite query statement (e.g. SELECT)
-
-    This function will execute the provided SQL and return a tuple of:
-    - an Array of SDRow objects
-    - an Int with the error code, or nil if there was no error
-
-    The value for each column in an SDRow can be obtained using the column name in the subscript format similar to a Dictionary, along with the function to obtain the value in the appropriate type (.asString(), .asDate(), .asData(), .asInt(), .asDouble(), and .asBool()).
-    Without the function call to return a specific type, the SDRow will return an object with type AnyObject.
-    Note: NULL values in the SQLite database will be returned as 'nil'.
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - parameter sqlStr:  The query String of SQL to be executed (e.g. SELECT)
-
-    - returns:       A tuple containing an Array of "SDRow"s, and an Int with the error code or nil if there was no error
-    */
-    public static func executeQuery(sqlStr: String) -> (result: [SDRow], error: Int?) {
-
-        //create result and error variables
-        var result = [SDRow] ()
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the query statement
-            (result, error) = SQLiteDB.sharedInstance.executeQuery(sqlStr)
-
-            //close database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-    /**
-    Execute a SQL query statement (e.g. SELECT) with arguments to be bound to the characters "?" (for values) and "i?" (for identifiers e.g. table or column names).
-
-    See the "executeChange(sqlStr: String, withArgs: [AnyObject?])" function for more information on the arguments provided and binding.
-
-    See the "executeQuery(sqlStr: String)"  function for more information on the return value.
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - binding errors (201 - 203)
-
-    - parameter sqlStr:    The query String of SQL to be executed (e.g. SELECT)
-    - parameter withArgs:  An array of objects that will be bound, in order, to the characters "?" (for values) and "i?" (for identifiers, e.g. table or column names) in the sqlStr.
-
-    - returns:       A tuple containing an Array of "SDRow"s, and an Int with the error code or nil if there was no error
-    */
-    public static func executeQuery(sqlStr: String, withArgs: [AnyObject]) -> (result: [SDRow], error: Int?) {
-
-        //create result and error variables
-        var result = [SDRow] ()
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the query statement
-            (result, error) = SQLiteDB.sharedInstance.executeQuery(sqlStr, withArgs: withArgs)
-
-            //close database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-    /**
-    Execute functions in a closure on a single custom connection
-
-
-    Note: This function cannot be nested within itself, or inside a transaction/savepoint.
-
-    Possible errors returned by this function are:
-
-    - custom connection errors (301 - 306)
-
-    - parameter flags:    The custom flag associated with the connection. Can be either:
-                        - .ReadOnly
-                        - .ReadWrite
-                        - .ReadWriteCreate
-
-    - parameter closure:  A closure containing functions that will be executed on the custom connection
-
-    - returns:        An Int with the error code, or nil if there was no error
-    */
-    public static func executeWithConnection(flags: SD.Flags, closure: ()->Void) -> Int? {
-
-        //create error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open the custom connection
-            if let err = SQLiteDB.sharedInstance.openWithFlags(flags.toSQL()) {
-                error = err
-                return
-            }
-
-            //execute the closure
-            closure()
-
-            //close the custom connection
-            if let err = SQLiteDB.sharedInstance.closeCustomConnection() {
-                error = err
-                return
-            }
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
-    }
-
-
-    // MARK: - Escaping Objects
-
-    /**
-    Escape an object to be inserted into a SQLite statement as a value
-
-    NOTE: Supported object types are: String, Int, Double, Bool, NSData, NSDate, and nil. All other data types will return the String value "NULL", and a warning message will be printed.
-
-    - parameter obj:  The value to be escaped
-
-    - returns:    The escaped value as a String, ready to be inserted into a SQL statement. Note: Single quotes (') will be placed around the entire value, if necessary.
-    */
-    public static func escapeValue(obj: AnyObject?) -> String {
-
-        return SQLiteDB.sharedInstance.escapeValue(obj)
-    }
-
-    /**
-    Escape a string to be inserted into a SQLite statement as an indentifier (e.g. table or column name)
-
-    - parameter obj:  The identifier to be escaped. NOTE: This object must be of type String.
-
-    - returns:    The escaped identifier as a String, ready to be inserted into a SQL statement. Note: Double quotes (") will be placed around the entire identifier.
-    */
-    public static func escapeIdentifier(obj: String) -> String {
-
-        return SQLiteDB.sharedInstance.escapeIdentifier(obj)
-    }
-
-
-    // MARK: - Tables
-
-    /**
-    Create A Table With The Provided Column Names and Types
-
-    Note: The ID field is created automatically as "INTEGER PRIMARY KEY AUTOINCREMENT"
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - parameter  table:                The table name to be created
-    - parameter  columnNamesAndTypes:  A dictionary where the key = column name, and the value = data type
-
-    - returns:                     An Int with the error code, or nil if there was no error
-    */
-    public static func createTable(table: String, withColumnNamesAndTypes values: [String: SwiftData.DataType]) -> Int? {
-
-        //create the error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the statement
-            error = SQLiteDB.sharedInstance.createSQLTable(table, withColumnsAndTypes: values)
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
-    }
-
-    /**
-    Delete a SQLite table by name
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - parameter  table:  The table name to be deleted
-
-    - returns:       An Int with the error code, or nil if there was no error
-    */
-    public static func deleteTable(table: String) -> Int? {
-
-        //create the error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the statement
-            error = SQLiteDB.sharedInstance.deleteSQLTable(table)
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
-    }
-
-    /**
-    Obtain a list of the existing SQLite table names
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - Table query error (403)
-
-    - returns:  A tuple containing an Array of all existing SQLite table names, and an Int with the error code or nil if there was no error
-    */
-    public static func existingTables() -> (result: [String], error: Int?) {
-
-        //create result and error variables
-        var result = [String] ()
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the statement
-            (result, error) = SQLiteDB.sharedInstance.existingTables()
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-
-    // MARK: - Misc
-
-
-    /**
-    Obtain the error message relating to the provided error code
-
-    - parameter code:  The error code provided
-
-    - returns:     The error message relating to the provided error code
-    */
-    public static func errorMessageForCode(code: Int) -> String {
-
-        return SwiftData.SDError.errorMessageFromCode(code)
-    }
-
-    /**
-    Obtain the database path
-
-    - returns:  The path to the SwiftData database
-    */
-    public static func databasePath() -> String {
-
-        return SQLiteDB.sharedInstance.dbPath
-    }
-
-    /**
-    Obtain the last inserted row id
-
-    Note: Care should be taken when the database is being accessed from multiple threads. The value could possibly return the last inserted row ID for another operation if another thread executes after your intended operation but before this function call.
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - returns:  A tuple of he ID of the last successfully inserted row's, and an Int of the error code or nil if there was no error
-    */
-    public static func lastInsertedRowID() -> (rowID: Int, error: Int?) {
-
-        //create result and error variables
-        var result = 0
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //find the last inserted row id
-            result = SQLiteDB.sharedInstance.lastInsertedRowID()
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-    /**
-    Obtain the number of rows modified by the most recently completed SQLite statement (INSERT, UPDATE, or DELETE)
-
-    Note: Care should be taken when the database is being accessed from multiple threads. The value could possibly return the number of rows modified for another operation if another thread executes after your intended operation but before this function call.
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - returns:  A tuple of the number of rows modified by the most recently completed SQLite statement, and an Int with the error code or nil if there was no error
-    */
-    public static func numberOfRowsModified() -> (rowID: Int, error: Int?) {
-
-        //create result and error variables
-        var result = 0
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //find the number of rows modified
-            result = SQLiteDB.sharedInstance.numberOfRowsModified()
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-
-    // MARK: - Indexes
-
-    /**
-    Create a SQLite index on the specified table and column(s)
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - Index error (401)
-
-    - parameter name:       The index name that is being created
-    - parameter onColumns:  An array of column names that the index will be applied to (must be one column or greater)
-    - parameter inTable:    The table name where the index is being created
-    - parameter isUnique:   True if the index should be unique, false if it should not be unique (defaults to false)
-
-    - returns:          An Int with the error code, or nil if there was no error
-    */
-    public static func createIndex(name name: String, onColumns: [String], inTable: String, isUnique: Bool = false) -> Int? {
-
-        //create the error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //create the index
-            error = SQLiteDB.sharedInstance.createIndex(name, columns: onColumns, table: inTable, unique: isUnique)
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
-    }
-
-    /**
-    Remove a SQLite index by its name
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-
-    - parameter indexName:  The name of the index to be removed
-
-    - returns:          An Int with the error code, or nil if there was no error
-    */
-    public static func removeIndex(indexName: String) -> Int? {
-
-        //create the error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //remove the index
-            error = SQLiteDB.sharedInstance.removeIndex(indexName)
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return error
-    }
-
-    /**
-    Obtain a list of all existing indexes
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - Index error (402)
-
-    - returns:  A tuple containing an Array of all existing index names on the SQLite database, and an Int with the error code or nil if there was no error
-    */
-    public static func existingIndexes() -> (result: [String], error: Int?) {
-
-        //create the result and error variables
-        var result = [String] ()
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the statement
-            (result, error) = SQLiteDB.sharedInstance.existingIndexes()
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-    /**
-    Obtain a list of all existing indexes on a specific table
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - Index error (402)
-
-    - parameter  table:  The name of the table that is being queried for indexes
-
-    - returns:       A tuple containing an Array of all existing index names in the table, and an Int with the error code or nil if there was no error
-    */
-    public static func existingIndexesForTable(table: String) -> (result: [String], error: Int?) {
-
-        //create the result and error variables
-        var result = [String] ()
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //execute the statement
-            (result, error) = SQLiteDB.sharedInstance.existingIndexesForTable(table)
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
-        }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
-            }
-        }
-
-        return (result, error)
-    }
-
-
-    // MARK: - Transactions and Savepoints
-
-    /**
-    Execute commands within a single exclusive transaction
-
-    A connection to the database is opened and is not closed until the end of the transaction. A transaction cannot be embedded into another transaction or savepoint.
-
-    Possible errors returned by this function are:
-
-    - SQLite errors (0 - 101)
-    - Transaction errors (501 - 502)
-
-    - parameter transactionClosure:  A closure containing commands that will execute as part of a single transaction. If the transactionClosure returns true, the changes made within the closure will be committed. If false, the changes will be rolled back and will not be saved.
-
-    - returns:                   An Int with the error code, or nil if there was no error committing or rolling back the transaction
-    */
-    public static func transaction(transactionClosure: ()->Bool) -> Int? {
-
-        //create the error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //begin the transaction
-            if let err = SQLiteDB.sharedInstance.beginTransaction() {
-                SQLiteDB.sharedInstance.close()
-                error = err
-                return
-            }
-
-            //execute the transaction closure
-            if transactionClosure() {
-                if let err = SQLiteDB.sharedInstance.commitTransaction() {
-                    error = err
+    /// If `type` is `.Dictionary`, return json whose object is `dictionary[key]` , otherwise return null json with error.
+    private subscript(key key: String) -> JSON {
+        get {
+            var r = JSON.null
+            if self.type == .Dictionary {
+                if let o = self.rawDictionary[key] {
+                    r = JSON(o)
+                } else {
+                    r._error = NSError(domain: ErrorDomain, code: ErrorNotExist, userInfo: [NSLocalizedDescriptionKey: "Dictionary[\"\(key)\"] does not exist"])
                 }
             } else {
-                if let err = SQLiteDB.sharedInstance.rollbackTransaction() {
-                    error = err
-                }
+                r._error = self._error ?? NSError(domain: ErrorDomain, code: ErrorWrongType, userInfo: [NSLocalizedDescriptionKey: "Dictionary[\"\(key)\"] failure, It is not an dictionary"])
             }
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
+            return r
         }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
+        set {
+            if self.type == .Dictionary && newValue.error == nil {
+                self.rawDictionary[key] = newValue.object
             }
         }
+    }
 
-        return error
+    /// If `sub` is `Int`, return `subscript(index:)`; If `sub` is `String`,  return `subscript(key:)`.
+    private subscript(sub sub: JSONSubscriptType) -> JSON {
+        get {
+            switch sub.jsonKey {
+            case .Index(let index): return self[index: index]
+            case .Key(let key): return self[key: key]
+            }
+        }
+        set {
+            switch sub.jsonKey {
+            case .Index(let index): self[index: index] = newValue
+            case .Key(let key): self[key: key] = newValue
+            }
+        }
     }
 
     /**
-    Execute commands within a single savepoint
+    Find a json in the complex data structuresby using the Int/String's array.
 
-    A connection to the database is opened and is not closed until the end of the savepoint (or the end of the last savepoint, if embedded).
+    - parameter path: The target json's path. Example:
 
-    NOTE: Unlike transactions, savepoints may be embedded into other savepoints or transactions.
+    let json = JSON[data]
+    let path = [9,"list","person","name"]
+    let name = json[path]
 
-    Possible errors returned by this function are:
+    The same as: let name = json[9]["list"]["person"]["name"]
 
-    - SQLite errors (0 - 101)
-
-    - parameter savepointClosure:  A closure containing commands that will execute as part of a single savepoint. If the savepointClosure returns true, the changes made within the closure will be released. If false, the changes will be rolled back and will not be saved.
-
-    - returns:                 An Int with the error code, or nil if there was no error releasing or rolling back the savepoint
+    - returns: Return a json found by the path or a null json with error
     */
-    public static func savepoint(savepointClosure: ()->Bool) -> Int? {
-
-        //create the error variable
-        var error: Int? = nil
-
-        //create task closure
-        let task: ()->Void = {
-
-            //open database connection
-            if let err = SQLiteDB.sharedInstance.open() {
-                error = err
-                return
-            }
-
-            //begin the savepoint
-            if let err = SQLiteDB.sharedInstance.beginSavepoint() {
-                SQLiteDB.sharedInstance.close()
-                error = err
-                return
-            }
-
-            //execute the savepoint closure
-            if savepointClosure() {
-                if let err = SQLiteDB.sharedInstance.releaseSavepoint() {
-                    error = err
-                }
-            } else {
-                if let err = SQLiteDB.sharedInstance.rollbackSavepoint() {
-                    print("Error rolling back to savepoint")
-                    --SQLiteDB.sharedInstance.savepointsOpen
-                    SQLiteDB.sharedInstance.close()
-                    error = err
-                    return
-                }
-                if let err = SQLiteDB.sharedInstance.releaseSavepoint() {
-                    error = err
-                }
-            }
-
-            //close the database connection
-            SQLiteDB.sharedInstance.close()
-
+    public subscript(path: [JSONSubscriptType]) -> JSON {
+        get {
+            return path.reduce(self) { $0[sub: $1] }
         }
-
-        //execute the task on the current thread if in a transaction, savepoint, or closure. Otherwise, add the task to the database queue
-        if SQLiteDB.sharedInstance.inTransaction || SQLiteDB.sharedInstance.savepointsOpen > 0 || SQLiteDB.sharedInstance.openWithFlags {
-            task()
-        } else {
-            dispatch_sync(SQLiteDB.sharedInstance.queue) {
-                task()
+        set {
+            switch path.count {
+            case 0:
+                return
+            case 1:
+                self[sub:path[0]].object = newValue.object
+            default:
+                var aPath = path; aPath.removeAtIndex(0)
+                var nextJSON = self[sub: path[0]]
+                nextJSON[aPath] = newValue
+                self[sub: path[0]] = nextJSON
             }
         }
-
-        return error
     }
 
     /**
-    Convenience function to save a UIImage to disk and return the ID
+    Find a json in the complex data structures by using the Int/String's array.
 
-    - parameter image:  The UIImage to be saved
+    - parameter path: The target json's path. Example:
 
-    - returns:      The ID of the saved image as a String, or nil if there was an error saving the image to disk
+    let name = json[9,"list","person","name"]
+
+    The same as: let name = json[9]["list"]["person"]["name"]
+
+    - returns: Return a json found by the path or a null json with error
     */
-    public static func saveUIImage(image: UIImage) -> String? {
+    public subscript(path: JSONSubscriptType...) -> JSON {
+        get {
+            return self[path]
+        }
+        set {
+            self[path] = newValue
+        }
+    }
+}
 
-        let docsPath = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true)[0]
-        let imageDirPath = docsPath.stringByAppendingPathComponent("SwiftDataImages")
+// MARK: - LiteralConvertible
 
-        if !NSFileManager.defaultManager().fileExistsAtPath(imageDirPath) {
+extension JSON: Swift.StringLiteralConvertible {
+
+    public init(stringLiteral value: StringLiteralType) {
+        self.init(value)
+    }
+
+    public init(extendedGraphemeClusterLiteral value: StringLiteralType) {
+        self.init(value)
+    }
+
+    public init(unicodeScalarLiteral value: StringLiteralType) {
+        self.init(value)
+    }
+}
+
+extension JSON: Swift.IntegerLiteralConvertible {
+
+    public init(integerLiteral value: IntegerLiteralType) {
+        self.init(value)
+    }
+}
+
+extension JSON: Swift.BooleanLiteralConvertible {
+
+    public init(booleanLiteral value: BooleanLiteralType) {
+        self.init(value)
+    }
+}
+
+extension JSON: Swift.FloatLiteralConvertible {
+
+    public init(floatLiteral value: FloatLiteralType) {
+        self.init(value)
+    }
+}
+
+extension JSON: Swift.DictionaryLiteralConvertible {
+
+    public init(dictionaryLiteral elements: (String, AnyObject)...) {
+        self.init(elements.reduce([String : AnyObject](minimumCapacity: elements.count)){(dictionary: [String : AnyObject], element:(String, AnyObject)) -> [String : AnyObject] in
+            var d = dictionary
+            d[element.0] = element.1
+            return d
+            })
+    }
+}
+
+extension JSON: Swift.ArrayLiteralConvertible {
+
+    public init(arrayLiteral elements: AnyObject...) {
+        self.init(elements)
+    }
+}
+
+extension JSON: Swift.NilLiteralConvertible {
+
+    public init(nilLiteral: ()) {
+        self.init(NSNull())
+    }
+}
+
+// MARK: - Raw
+
+extension JSON: Swift.RawRepresentable {
+
+    public init?(rawValue: AnyObject) {
+        if JSON(rawValue).type == .Unknown {
+            return nil
+        } else {
+            self.init(rawValue)
+        }
+    }
+
+    public var rawValue: AnyObject {
+        return self.object
+    }
+
+    public func rawData(options opt: NSJSONWritingOptions = NSJSONWritingOptions(rawValue: 0)) throws -> NSData {
+        guard NSJSONSerialization.isValidJSONObject(self.object) else {
+            throw NSError(domain: ErrorDomain, code: ErrorInvalidJSON, userInfo: [NSLocalizedDescriptionKey: "JSON is invalid"])
+        }
+
+        return try NSJSONSerialization.dataWithJSONObject(self.object, options: opt)
+    }
+
+    public func rawString(encoding: UInt = NSUTF8StringEncoding, options opt: NSJSONWritingOptions = .PrettyPrinted) -> String? {
+        switch self.type {
+        case .Array, .Dictionary:
             do {
-                try NSFileManager.defaultManager().createDirectoryAtPath(imageDirPath, withIntermediateDirectories: false, attributes: nil)
+                let data = try self.rawData(options: opt)
+                return NSString(data: data, encoding: encoding) as? String
             } catch _ {
-                print("Error creating SwiftData image folder")
+                return nil
+            }
+        case .String:
+            return self.rawString
+        case .Number:
+            return self.rawNumber.stringValue
+        case .Bool:
+            return self.rawNumber.boolValue.description
+        case .Null:
+            return "null"
+        default:
+            return nil
+        }
+    }
+}
+
+// MARK: - Printable, DebugPrintable
+
+extension JSON: Swift.Printable, Swift.DebugPrintable {
+
+    public var description: String {
+        if let string = self.rawString(options:.PrettyPrinted) {
+            return string
+        } else {
+            return "unknown"
+        }
+    }
+
+    public var debugDescription: String {
+        return description
+    }
+}
+
+// MARK: - Array
+
+extension JSON {
+
+    //Optional [JSON]
+    public var array: [JSON]? {
+        get {
+            if self.type == .Array {
+                return self.rawArray.map{ JSON($0) }
+            } else {
                 return nil
             }
         }
-
-        let imageID = NSUUID().UUIDString
-
-        let imagePath = imageDirPath.stringByAppendingPathComponent(imageID)
-
-        let imageAsData = UIImagePNGRepresentation(image)
-        if !imageAsData!.writeToFile(imagePath, atomically: true) {
-            print("Error saving image")
-            return nil
-        }
-
-        return imageID
-
     }
 
-    /**
-    Convenience function to delete a UIImage with the specified ID
+    //Non-optional [JSON]
+    public var arrayValue: [JSON] {
+        get {
+            return self.array ?? []
+        }
+    }
 
-    - parameter id:  The id of the UIImage
+    //Optional [AnyObject]
+    public var arrayObject: [AnyObject]? {
+        get {
+            switch self.type {
+            case .Array:
+                return self.rawArray
+            default:
+                return nil
+            }
+        }
+        set {
+            if let array = newValue {
+                self.object = array
+            } else {
+                self.object = NSNull()
+            }
+        }
+    }
+}
 
-    - returns:   True if the image was successfully deleted, or false if there was an error during the deletion
-    */
-    public static func deleteUIImageWithID(id: String) -> Bool {
+// MARK: - Dictionary
 
-        let docsPath = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true)[0] 
-        let imageDirPath = docsPath.stringByAppendingPathComponent("SwiftDataImages")
-        let fullPath = imageDirPath.stringByAppendingPathComponent(id)
+extension JSON {
 
-        do {
-            try NSFileManager.defaultManager().removeItemAtPath(fullPath)
-            return true
-        } catch _ {
+    //Optional [String : JSON]
+    public var dictionary: [String : JSON]? {
+        if self.type == .Dictionary {
+            return self.rawDictionary.reduce([String : JSON](minimumCapacity: count)) { (dictionary: [String : JSON], element: (String, AnyObject)) -> [String : JSON] in
+                var d = dictionary
+                d[element.0] = JSON(element.1)
+                return d
+            }
+        } else {
+            return nil
+        }
+    }
+
+    //Non-optional [String : JSON]
+    public var dictionaryValue: [String : JSON] {
+        return self.dictionary ?? [:]
+    }
+
+    //Optional [String : AnyObject]
+    public var dictionaryObject: [String : AnyObject]? {
+        get {
+            switch self.type {
+            case .Dictionary:
+                return self.rawDictionary
+            default:
+                return nil
+            }
+        }
+        set {
+            if let v = newValue {
+                self.object = v
+            } else {
+                self.object = NSNull()
+            }
+        }
+    }
+}
+
+// MARK: - Bool
+
+extension JSON: Swift.BooleanType {
+
+    //Optional bool
+    public var bool: Bool? {
+        get {
+            switch self.type {
+            case .Bool:
+                return self.rawNumber.boolValue
+            default:
+                return nil
+            }
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(bool: newValue)
+            } else {
+                self.object = NSNull()
+            }
+        }
+    }
+
+    //Non-optional bool
+    public var boolValue: Bool {
+        get {
+            switch self.type {
+            case .Bool, .Number, .String:
+                return self.object.boolValue
+            default:
+                return false
+            }
+        }
+        set {
+            self.object = NSNumber(bool: newValue)
+        }
+    }
+}
+
+// MARK: - String
+
+extension JSON {
+
+    //Optional string
+    public var string: String? {
+        get {
+            switch self.type {
+            case .String:
+                return self.object as? String
+            default:
+                return nil
+            }
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSString(string:newValue)
+            } else {
+                self.object = NSNull()
+            }
+        }
+    }
+
+    //Non-optional string
+    public var stringValue: String {
+        get {
+            switch self.type {
+            case .String:
+                return self.object as? String ?? ""
+            case .Number:
+                return self.object.stringValue
+            case .Bool:
+                return (self.object as? Bool).map { String($0) } ?? ""
+            default:
+                return ""
+            }
+        }
+        set {
+            self.object = NSString(string:newValue)
+        }
+    }
+}
+
+// MARK: - Number
+extension JSON {
+
+    //Optional number
+    public var number: NSNumber? {
+        get {
+            switch self.type {
+            case .Number, .Bool:
+                return self.rawNumber
+            default:
+                return nil
+            }
+        }
+        set {
+            self.object = newValue ?? NSNull()
+        }
+    }
+
+    //Non-optional number
+    public var numberValue: NSNumber {
+        get {
+            switch self.type {
+            case .String:
+                let decimal = NSDecimalNumber(string: self.object as? String)
+                if decimal == NSDecimalNumber.notANumber() {  // indicates parse error
+                    return NSDecimalNumber.zero()
+                }
+                return decimal
+            case .Number, .Bool:
+                return self.object as? NSNumber ?? NSNumber(int: 0)
+            default:
+                return NSNumber(double: 0.0)
+            }
+        }
+        set {
+            self.object = newValue
+        }
+    }
+}
+
+//MARK: - Null
+extension JSON {
+
+    public var null: NSNull? {
+        get {
+            switch self.type {
+            case .Null:
+                return self.rawNull
+            default:
+                return nil
+            }
+        }
+        set {
+            self.object = NSNull()
+        }
+    }
+    public func exists() -> Bool{
+        if let errorValue = error where errorValue.code == ErrorNotExist{
             return false
         }
-
+        return true
     }
-
-
-    // MARK: - SQLiteDB Class
-
-    private class SQLiteDB {
-
-        //create a single instance of SQLiteDB
-        class var sharedInstance: SQLiteDB {
-            struct Singleton {
-                static let instance = SQLiteDB()
-            }
-            return Singleton.instance
-        }
-
-        //declare SQLiteDB properties
-        var sqliteDB: COpaquePointer = nil
-        var dbPath = SQLiteDB.createPath()
-        var inTransaction = false
-        var isConnected = false
-        var openWithFlags = false
-        var savepointsOpen = 0
-        let queue = dispatch_queue_create("SwiftData.DatabaseQueue", DISPATCH_QUEUE_SERIAL)
-
-
-        // MARK: - Database Handling Functions
-
-        //open a connection to the sqlite3 database
-        func open() -> Int? {
-
-            //check if in a transaction
-            if inTransaction || openWithFlags || savepointsOpen > 0 {
-                return nil
-            }
-
-            //check if connection is already open
-            if sqliteDB != nil || isConnected {
-                return nil
-            }
-
-            //open connection
-            let status = sqlite3_open(dbPath.cStringUsingEncoding(NSUTF8StringEncoding)!, &sqliteDB)
-            if status != SQLITE_OK {
-                print("SwiftData Error -> During: Opening Database")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-                return Int(status)
-            }
-
-            isConnected = true
-
-            return nil
-        }
-
-        //open a connection to the sqlite3 database with flags
-        func openWithFlags(flags: Int32) -> Int? {
-
-            //check if in transaction
-            if inTransaction {
-                print("SwiftData Error -> During: Opening Database with Flags")
-                print("                -> Code: 302 - Cannot open a custom connection inside a transaction")
-                return 302
-            }
-
-            //check if already openWithFlags
-            if openWithFlags {
-                print("SwiftData Error -> During: Opening Database with Flags")
-                print("                -> Code: 301 - A custom connection is already open")
-                return 301
-            }
-
-            //check if in savepoint
-            if savepointsOpen > 0 {
-                print("SwiftData Error -> During: Opening Database with Flags")
-                print("                -> Code: 303 - Cannot open a custom connection inside a savepoint")
-                return 303
-            }
-
-            //check if already opened
-            if isConnected {
-                print("SwiftData Error -> During: Opening Database with Flags")
-                print("                -> Code: 301 - A custom connection is already open")
-                return 301
-            }
-
-            //open the connection
-            let status = sqlite3_open_v2(dbPath.cStringUsingEncoding(NSUTF8StringEncoding)!, &sqliteDB, flags, nil)
-            if status != SQLITE_OK {
-                print("SwiftData Error -> During: Opening Database with Flags")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-                return Int(status)
-            }
-
-            isConnected = true
-            openWithFlags = true
-
-            return nil
-        }
-
-        //close the connection to to the sqlite3 database
-        func close() {
-
-            //check if in transaction
-            if inTransaction || openWithFlags || savepointsOpen > 0 {
-                return
-            }
-
-            //check if connection is already closed
-            if sqliteDB == nil || !isConnected {
-                return
-            }
-
-            //close connection
-            let status = sqlite3_close(sqliteDB)
-            if status != SQLITE_OK {
-                print("SwiftData Error -> During: Closing Database")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-            }
-
-            sqliteDB = nil
-            isConnected = false
-        }
-
-        //close a custom connection to the sqlite3 database
-        func closeCustomConnection() -> Int? {
-
-            //check if in trasaction
-            if inTransaction {
-                print("SwiftData Error -> During: Closing Database with Flags")
-                print("                -> Code: 305 - Cannot close a custom connection inside a transaction")
-                return 305
-            }
-
-            //check if in savepoint
-            if savepointsOpen > 0 {
-                print("SwiftData Error -> During: Closing Database with Flags")
-                print("                -> Code: 306 - Cannot close a custom connection inside a savepoint")
-                return 306
-            }
-
-            //check if no custom connectino open
-            if !openWithFlags {
-                print("SwiftData Error -> During: Closing Database with Flags")
-                print("                -> Code: 304 - A custom connection is not currently open")
-                return 304
-            }
-
-            //close connection
-            let status = sqlite3_close(sqliteDB)
-
-            sqliteDB = nil
-            isConnected = false
-            openWithFlags = false
-
-            if status != SQLITE_OK {
-                print("SwiftData Error -> During: Closing Database with Flags")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-                return Int(status)
-            }
-
-            return nil
-        }
-
-        //create the database path
-        class func createPath() -> String {
-
-            let docsPath = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true)[0] 
-            let databaseStr = "SwiftData.sqlite"
-            let dbPath = docsPath.stringByAppendingPathComponent(databaseStr)
-
-            return dbPath
-        }
-
-        //begin a transaction
-        func beginTransaction() -> Int? {
-
-            if savepointsOpen > 0 {
-                print("SwiftData Error -> During: Beginning Transaction")
-                print("                -> Code: 501 - Cannot begin a transaction within a savepoint")
-                return 501
-            }
-
-            if inTransaction {
-                print("SwiftData Error -> During: Beginning Transaction")
-                print("                -> Code: 502 - Cannot begin a transaction within another transaction")
-                return 502
-            }
-
-            if let error = executeChange("BEGIN EXCLUSIVE") {
-                return error
-            }
-
-            inTransaction = true
-
-            return nil
-
-        }
-
-        //rollback a transaction
-        func rollbackTransaction() -> Int? {
-
-            let error = executeChange("ROLLBACK")
-
-            inTransaction = false
-
-            return error
-        }
-
-        //commit a transaction
-        func commitTransaction() -> Int? {
-
-            let error = executeChange("COMMIT")
-
-            inTransaction = false
-
-            if let err = error {
-                rollbackTransaction()
-                return err
-            }
-
-            return nil
-        }
-
-        //begin a savepoint
-        func beginSavepoint() -> Int? {
-
-            if let error = executeChange("SAVEPOINT 'savepoint\(savepointsOpen + 1)'") {
-                return error
-            }
-
-            ++savepointsOpen
-
-            return nil
-        }
-
-        //rollback a savepoint
-        func rollbackSavepoint() -> Int? {
-
-            return executeChange("ROLLBACK TO 'savepoint\(savepointsOpen)'")
-        }
-
-        //release a savepoint
-        func releaseSavepoint() -> Int? {
-
-            let error = executeChange("RELEASE 'savepoint\(savepointsOpen)'")
-
-            --savepointsOpen
-
-            return error
-        }
-
-        //get last inserted row id
-        func lastInsertedRowID() -> Int {
-            let id = sqlite3_last_insert_rowid(sqliteDB)
-            return Int(id)
-        }
-
-        //number of rows changed by last update
-        func numberOfRowsModified() -> Int {
-
-            return Int(sqlite3_changes(sqliteDB))
-        }
-
-        //return value of column
-        func getColumnValue(statement: COpaquePointer, index: Int32, type: String) -> AnyObject? {
-
-            switch type {
-            case "INT", "INTEGER", "TINYINT", "SMALLINT", "MEDIUMINT", "BIGINT", "UNSIGNED BIG INT", "INT2", "INT8":
-                if sqlite3_column_type(statement, index) == SQLITE_NULL {
+}
+
+//MARK: - URL
+extension JSON {
+
+    //Optional URL
+    public var URL: NSURL? {
+        get {
+            switch self.type {
+            case .String:
+                if let encodedString_ = self.rawString.stringByAddingPercentEncodingWithAllowedCharacters(NSCharacterSet.URLQueryAllowedCharacterSet()) {
+                    return NSURL(string: encodedString_)
+                } else {
                     return nil
                 }
-                return Int(sqlite3_column_int(statement, index))
-            case "CHARACTER(20)", "VARCHAR(255)", "VARYING CHARACTER(255)", "NCHAR(55)", "NATIVE CHARACTER", "NVARCHAR(100)", "TEXT", "CLOB":
-                let text = UnsafePointer<Int8>(sqlite3_column_text(statement, index))
-                return String.fromCString(text)
-            case "BLOB", "NONE":
-                let blob = sqlite3_column_blob(statement, index)
-                if blob != nil {
-                    let size = sqlite3_column_bytes(statement, index)
-                    return NSData(bytes: blob, length: Int(size))
-                }
-                return nil
-            case "REAL", "DOUBLE", "DOUBLE PRECISION", "FLOAT", "NUMERIC", "DECIMAL(10,5)":
-                if sqlite3_column_type(statement, index) == SQLITE_NULL {
-                    return nil
-                }
-                return Double(sqlite3_column_double(statement, index))
-            case "BOOLEAN":
-                if sqlite3_column_type(statement, index) == SQLITE_NULL {
-                    return nil
-                }
-                return sqlite3_column_int(statement, index) != 0
-            case "DATE", "DATETIME":
-                let dateFormatter = NSDateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-                let text = UnsafePointer<Int8>(sqlite3_column_text(statement, index))
-                if let string = String.fromCString(text) {
-                    return dateFormatter.dateFromString(string)
-                }
-                print("SwiftData Warning -> The text date at column: \(index) could not be cast as a String, returning nil")
-                return nil
             default:
-                print("SwiftData Warning -> Column: \(index) is of an unrecognized type, returning nil")
                 return nil
             }
-
         }
-
-
-        // MARK: SQLite Execution Functions
-
-        //execute a SQLite update from a SQL String
-        func executeChange(sqlStr: String, withArgs: [AnyObject]? = nil) -> Int? {
-
-            var sql = sqlStr
-            if let args = withArgs {
-                let result = bind(args, toSQL: sql)
-                if let error = result.error {
-                    return error
-                } else {
-                    sql = result.string
-                }
-            }
-
-            var pStmt: COpaquePointer = nil
-            var status = sqlite3_prepare_v2(SQLiteDB.sharedInstance.sqliteDB, sql, -1, &pStmt, nil)
-            if status != SQLITE_OK {
-                print("SwiftData Error -> During: SQL Prepare")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-                sqlite3_finalize(pStmt)
-                return Int(status)
-            }
-
-            status = sqlite3_step(pStmt)
-            if status != SQLITE_DONE && status != SQLITE_OK {
-                print("SwiftData Error -> During: SQL Step")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-                sqlite3_finalize(pStmt)
-                return Int(status)
-            }
-
-            sqlite3_finalize(pStmt)
-
-            return nil
+        set {
+            self.object = newValue?.absoluteString ?? NSNull()
         }
-
-        //execute a SQLite query from a SQL String
-        func executeQuery(sqlStr: String, withArgs: [AnyObject]? = nil) -> (result: [SDRow], error: Int?) {
-
-            var resultSet = [SDRow]()
-
-            var sql = sqlStr
-            if let args = withArgs {
-                let result = bind(args, toSQL: sql)
-                if let err = result.error {
-                    return (resultSet, err)
-                } else {
-                    sql = result.string
-                }
-            }
-
-            var pStmt: COpaquePointer = nil
-            var status = sqlite3_prepare_v2(SQLiteDB.sharedInstance.sqliteDB, sql, -1, &pStmt, nil)
-            if status != SQLITE_OK {
-                print("SwiftData Error -> During: SQL Prepare")
-                print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                    print("                -> Details: \(errMsg)")
-                }
-                sqlite3_finalize(pStmt)
-                return (resultSet, Int(status))
-            }
-
-            var columnCount: Int32 = 0
-            var next = true
-            while next {
-                status = sqlite3_step(pStmt)
-                if status == SQLITE_ROW {
-                    columnCount = sqlite3_column_count(pStmt)
-                    var row = SDRow()
-                    for var i: Int32 = 0; i < columnCount; ++i {
-                        let columnName = String.fromCString(sqlite3_column_name(pStmt, i))!
-                        if let columnType = String.fromCString(sqlite3_column_decltype(pStmt, i))?.uppercaseString {
-                            if let columnValue: AnyObject = getColumnValue(pStmt, index: i, type: columnType) {
-                                row[columnName] = SDColumn(obj: columnValue)
-                            }
-                        } else {
-                            var columnType = ""
-                            switch sqlite3_column_type(pStmt, i) {
-                            case 1:
-                                columnType = "INTEGER"
-                            case 2:
-                                columnType = "FLOAT"
-                            case 3:
-                                columnType = "TEXT"
-                            case 4:
-                                columnType = "BLOB"
-                            case 5:
-                                columnType = "NULL"
-                            default:
-                                columnType = "NULL"
-                            }
-                            if let columnValue: AnyObject = getColumnValue(pStmt, index: i, type: columnType) {
-                                row[columnName] = SDColumn(obj: columnValue)
-                            }
-                        }
-                    }
-                    resultSet.append(row)
-                } else if status == SQLITE_DONE {
-                    next = false
-                } else {
-                    print("SwiftData Error -> During: SQL Step")
-                    print("                -> Code: \(status) - " + SDError.errorMessageFromCode(Int(status)))
-                    if let errMsg = String.fromCString(sqlite3_errmsg(SQLiteDB.sharedInstance.sqliteDB)) {
-                        print("                -> Details: \(errMsg)")
-                    }
-                    sqlite3_finalize(pStmt)
-                    return (resultSet, Int(status))
-                }
-
-            }
-
-            sqlite3_finalize(pStmt)
-
-            return (resultSet, nil)
-        }
-
     }
-
-
-    // MARK: - SDRow
-
-    public struct SDRow {
-
-        //declare properties
-        var values = [String: SDColumn]()
-
-        //subscript
-        public subscript(key: String) -> SDColumn? {
-            get {
-                return values[key]
-            }
-            set(newValue) {
-                values[key] = newValue
-            }
-        }
-
-    }
-
-
-    // MARK: - SDColumn
-
-    public struct SDColumn {
-
-        //declare property
-        var value: AnyObject
-
-        //initialization
-        init(obj: AnyObject) {
-            value = obj
-        }
-
-        //return value by type
-
-        /**
-        Return the column value as a String
-
-        - returns:  An Optional String corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as a String, or the value is NULL
-        */
-        public func asString() -> String? {
-            return value as? String
-        }
-
-        /**
-        Return the column value as an Int
-
-        - returns:  An Optional Int corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as a Int, or the value is NULL
-        */
-        public func asInt() -> Int? {
-            return value as? Int
-        }
-
-        /**
-        Return the column value as a Double
-
-        - returns:  An Optional Double corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as a Double, or the value is NULL
-        */
-        public func asDouble() -> Double? {
-            return value as? Double
-        }
-
-        /**
-        Return the column value as a Bool
-
-        - returns:  An Optional Bool corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as a Bool, or the value is NULL
-        */
-        public func asBool() -> Bool? {
-            return value as? Bool
-        }
-
-        /**
-        Return the column value as NSData
-
-        - returns:  An Optional NSData object corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as NSData, or the value is NULL
-        */
-        public func asData() -> NSData? {
-            return value as? NSData
-        }
-
-        /**
-        Return the column value as an NSDate
-
-        - returns:  An Optional NSDate corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as an NSDate, or the value is NULL
-        */
-        public func asDate() -> NSDate? {
-            return value as? NSDate
-        }
-
-        /**
-        Return the column value as an AnyObject
-
-        - returns:  An Optional AnyObject corresponding to the apprioriate column value. Will be nil if: the column name does not exist, the value cannot be cast as an AnyObject, or the value is NULL
-        */
-        public func asAnyObject() -> AnyObject? {
-            return value
-        }
-
-        /**
-        Return the column value path as a UIImage
-
-        - returns:  An Optional UIImage corresponding to the path of the apprioriate column value. Will be nil if: the column name does not exist, the value of the specified path cannot be cast as a UIImage, or the value is NULL
-        */
-        public func asUIImage() -> UIImage? {
-            if let path = value as? String{
-                let docsPath = NSSearchPathForDirectoriesInDomains(NSSearchPathDirectory.DocumentDirectory, NSSearchPathDomainMask.UserDomainMask, true)[0] 
-                let imageDirPath = docsPath.stringByAppendingPathComponent("SwiftDataImages")
-                let fullPath = imageDirPath.stringByAppendingPathComponent(path)
-                if !NSFileManager.defaultManager().fileExistsAtPath(fullPath) {
-                    print("SwiftData Error -> Invalid image ID provided")
-                    return nil
-                }
-                let imageAsData = NSData(contentsOfFile: fullPath)
-                if let imageAsData = imageAsData {
-                    return UIImage(data: imageAsData)
-                }
-            }
-            return nil
-        }
-
-    }
-
-
-    // MARK: - Error Handling
-
-    private struct SDError {
-
-    }
-
 }
 
+// MARK: - Int, Double, Float, Int8, Int16, Int32, Int64
 
-// MARK: - Escaping And Binding Functions
+extension JSON {
 
-extension SwiftData.SQLiteDB {
-
-    //bind object
-    func bind(objects: [AnyObject], toSQL sql: String) -> (string: String, error: Int?) {
-
-        var newSql = ""
-        var bindIndex = 0
-        var i = false
-        for char in sql.characters {
-            if char == "?" {
-                if bindIndex > objects.count - 1 {
-                    print("SwiftData Error -> During: Object Binding")
-                    print("                -> Code: 201 - Not enough objects to bind provided")
-                    return ("", 201)
-                }
-                var obj = ""
-                if i {
-                    if let str = objects[bindIndex] as? String {
-                        obj = escapeIdentifier(str)
-                    } else {
-                        print("SwiftData Error -> During: Object Binding")
-                        print("                -> Code: 203 - Object to bind as identifier must be a String at array location: \(bindIndex)")
-                        return ("", 203)
-                    }
-                    newSql = newSql.substringToIndex(newSql.endIndex.predecessor())
-                } else {
-                    obj = escapeValue(objects[bindIndex])
-                }
-                newSql += obj
-                ++bindIndex
+    public var double: Double? {
+        get {
+            return self.number?.doubleValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(double: newValue)
             } else {
-                newSql.append(char)
-            }
-            if char == "i" {
-                i = true
-            } else if i {
-                i = false
+                self.object = NSNull()
             }
         }
+    }
 
-        if bindIndex != objects.count {
-            print("SwiftData Error -> During: Object Binding")
-            print("                -> Code: 202 - Too many objects to bind provided")
-            return ("", 202)
+    public var doubleValue: Double {
+        get {
+            return self.numberValue.doubleValue
         }
-
-        return (newSql, nil)
-    }
-
-    //return escaped String value of AnyObject
-    func escapeValue(obj: AnyObject?) -> String {
-
-        if let obj: AnyObject = obj {
-
-            if obj is String {
-                return "'\(escapeStringValue(obj as! String))'"
-            }
-
-            if obj is Double || obj is Int {
-                return "\(obj)"
-            }
-
-            if obj is Bool {
-                if obj as! Bool {
-                    return "1"
-                } else {
-                    return "0"
-                }
-            }
-
-            if obj is NSData {
-                let str = "\(obj)"
-                var newStr = ""
-                for char in str.characters {
-                    if char != "<" && char != ">" && char != " " {
-                        newStr.append(char)
-                    }
-                }
-
-                return "X'\(newStr)'"
-            }
-
-            if obj is NSDate {
-                let dateFormatter = NSDateFormatter()
-                dateFormatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-                return "\(escapeValue(dateFormatter.stringFromDate(obj as! NSDate)))"
-            }
-
-            if obj is UIImage {
-                if let imageID = SD.saveUIImage(obj as! UIImage) {
-                    return "'\(escapeStringValue(imageID))'"
-                }
-                print("SwiftData Warning -> Cannot save image, NULL will be inserted into the database")
-                return "NULL"
-            }
-
-            print("SwiftData Warning -> Object \"\(obj)\" is not a supported type and will be inserted into the database as NULL")
-            return "NULL"
-
-        } else {
-            return "NULL"
+        set {
+            self.object = NSNumber(double: newValue)
         }
-
     }
 
-    //return escaped String identifier
-    func escapeIdentifier(obj: String) -> String {
-
-        return "\"\(escapeStringIdentifier(obj))\""
-
-    }
-
-
-    //escape string
-    func escapeStringValue(str: String) -> String {
-        var escapedStr = ""
-        for char in str.characters {
-            if char == "'" {
-                escapedStr += "'"
-            }
-            escapedStr.append(char)
+    public var float: Float? {
+        get {
+            return self.number?.floatValue
         }
-
-        return escapedStr
-    }
-
-    //escape string
-    func escapeStringIdentifier(str: String) -> String {
-        var escapedStr = ""
-        for char in str.characters {
-            if char == "\"" {
-                escapedStr += "\""
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(float: newValue)
+            } else {
+                self.object = NSNull()
             }
-            escapedStr.append(char)
         }
-
-        return escapedStr
     }
 
+    public var floatValue: Float {
+        get {
+            return self.numberValue.floatValue
+        }
+        set {
+            self.object = NSNumber(float: newValue)
+        }
+    }
+
+    public var int: Int? {
+        get {
+            return self.number?.longValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(integer: newValue)
+            } else {
+                self.object = NSNull()
+            }
+        }
+    }
+
+    public var intValue: Int {
+        get {
+            return self.numberValue.integerValue
+        }
+        set {
+            self.object = NSNumber(integer: newValue)
+        }
+    }
+
+    public var uInt: UInt? {
+        get {
+            return self.number?.unsignedLongValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(unsignedLong: newValue)
+            } else {
+                self.object = NSNull()
+            }
+        }
+    }
+
+    public var uIntValue: UInt {
+        get {
+            return self.numberValue.unsignedLongValue
+        }
+        set {
+            self.object = NSNumber(unsignedLong: newValue)
+        }
+    }
+
+    public var int8: Int8? {
+        get {
+            return self.number?.charValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(char: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var int8Value: Int8 {
+        get {
+            return self.numberValue.charValue
+        }
+        set {
+            self.object = NSNumber(char: newValue)
+        }
+    }
+
+    public var uInt8: UInt8? {
+        get {
+            return self.number?.unsignedCharValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(unsignedChar: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var uInt8Value: UInt8 {
+        get {
+            return self.numberValue.unsignedCharValue
+        }
+        set {
+            self.object = NSNumber(unsignedChar: newValue)
+        }
+    }
+
+    public var int16: Int16? {
+        get {
+            return self.number?.shortValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(short: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var int16Value: Int16 {
+        get {
+            return self.numberValue.shortValue
+        }
+        set {
+            self.object = NSNumber(short: newValue)
+        }
+    }
+
+    public var uInt16: UInt16? {
+        get {
+            return self.number?.unsignedShortValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(unsignedShort: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var uInt16Value: UInt16 {
+        get {
+            return self.numberValue.unsignedShortValue
+        }
+        set {
+            self.object = NSNumber(unsignedShort: newValue)
+        }
+    }
+
+    public var int32: Int32? {
+        get {
+            return self.number?.intValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(int: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var int32Value: Int32 {
+        get {
+            return self.numberValue.intValue
+        }
+        set {
+            self.object = NSNumber(int: newValue)
+        }
+    }
+
+    public var uInt32: UInt32? {
+        get {
+            return self.number?.unsignedIntValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(unsignedInt: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var uInt32Value: UInt32 {
+        get {
+            return self.numberValue.unsignedIntValue
+        }
+        set {
+            self.object = NSNumber(unsignedInt: newValue)
+        }
+    }
+
+    public var int64: Int64? {
+        get {
+            return self.number?.longLongValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(longLong: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var int64Value: Int64 {
+        get {
+            return self.numberValue.longLongValue
+        }
+        set {
+            self.object = NSNumber(longLong: newValue)
+        }
+    }
+
+    public var uInt64: UInt64? {
+        get {
+            return self.number?.unsignedLongLongValue
+        }
+        set {
+            if let newValue = newValue {
+                self.object = NSNumber(unsignedLongLong: newValue)
+            } else {
+                self.object =  NSNull()
+            }
+        }
+    }
+
+    public var uInt64Value: UInt64 {
+        get {
+            return self.numberValue.unsignedLongLongValue
+        }
+        set {
+            self.object = NSNumber(unsignedLongLong: newValue)
+        }
+    }
 }
 
+//MARK: - Comparable
+extension JSON : Swift.Comparable {}
 
-// MARK: - SQL Creation Functions
+public func ==(lhs: JSON, rhs: JSON) -> Bool {
 
-extension SwiftData {
-
-    /**
-    Column Data Types
-
-    - parameter  StringVal:   A column with type String, corresponds to SQLite type "TEXT"
-    - parameter  IntVal:      A column with type Int, corresponds to SQLite type "INTEGER"
-    - parameter  DoubleVal:   A column with type Double, corresponds to SQLite type "DOUBLE"
-    - parameter  BoolVal:     A column with type Bool, corresponds to SQLite type "BOOLEAN"
-    - parameter  DataVal:     A column with type NSdata, corresponds to SQLite type "BLOB"
-    - parameter  DateVal:     A column with type NSDate, corresponds to SQLite type "DATE"
-    - parameter  UIImageVal:  A column with type String (the path value of saved UIImage), corresponds to SQLite type "TEXT"
-    */
-    public enum DataType {
-
-        case StringVal
-        case IntVal
-        case DoubleVal
-        case BoolVal
-        case DataVal
-        case DateVal
-        case UIImageVal
-
-        private func toSQL() -> String {
-
-            switch self {
-
-            case .StringVal, .UIImageVal:
-                return "TEXT"
-            case .IntVal:
-                return "INTEGER"
-            case .DoubleVal:
-                return "DOUBLE"
-            case .BoolVal:
-                return "BOOLEAN"
-            case .DataVal:
-                return "BLOB"
-            case .DateVal:
-                return "DATE"
-            }
-        }
-
+    switch (lhs.type, rhs.type) {
+    case (.Number, .Number):
+        return lhs.rawNumber == rhs.rawNumber
+    case (.String, .String):
+        return lhs.rawString == rhs.rawString
+    case (.Bool, .Bool):
+        return lhs.rawNumber.boolValue == rhs.rawNumber.boolValue
+    case (.Array, .Array):
+        return lhs.rawArray as NSArray == rhs.rawArray as NSArray
+    case (.Dictionary, .Dictionary):
+        return lhs.rawDictionary as NSDictionary == rhs.rawDictionary as NSDictionary
+    case (.Null, .Null):
+        return true
+    default:
+        return false
     }
-
-    /**
-    Flags for custom connection to the SQLite database
-
-    - parameter  ReadOnly:         Opens the SQLite database with the flag "SQLITE_OPEN_READONLY"
-    - parameter  ReadWrite:        Opens the SQLite database with the flag "SQLITE_OPEN_READWRITE"
-    - parameter  ReadWriteCreate:  Opens the SQLite database with the flag "SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE"
-    */
-    public enum Flags {
-
-        case ReadOnly
-        case ReadWrite
-        case ReadWriteCreate
-
-        private func toSQL() -> Int32 {
-
-            switch self {
-            case .ReadOnly:
-                return SQLITE_OPEN_READONLY
-            case .ReadWrite:
-                return SQLITE_OPEN_READWRITE
-            case .ReadWriteCreate:
-                return SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
-            }
-
-        }
-
-    }
-
 }
 
+public func <=(lhs: JSON, rhs: JSON) -> Bool {
 
-extension SwiftData.SQLiteDB {
-
-    //create a table
-    func createSQLTable(table: String, withColumnsAndTypes values: [String: SwiftData.DataType]) -> Int? {
-
-        //form the SQLite string for creation of the actual table
-        var sqlStr = "CREATE TABLE \(table) (ID INTEGER PRIMARY KEY AUTOINCREMENT, "
-        var firstRun = true
-        for value in values {
-            if firstRun {
-                sqlStr += "\(escapeIdentifier(value.0)) \(value.1.toSQL())"
-                firstRun = false
-            } else {
-                sqlStr += ", \(escapeIdentifier(value.0)) \(value.1.toSQL())"
-            }
-        }
-        sqlStr += ")"
-
-        //execute update to create new table
-        return executeChange(sqlStr)
+    switch (lhs.type, rhs.type) {
+    case (.Number, .Number):
+        return lhs.rawNumber <= rhs.rawNumber
+    case (.String, .String):
+        return lhs.rawString <= rhs.rawString
+    case (.Bool, .Bool):
+        return lhs.rawNumber.boolValue == rhs.rawNumber.boolValue
+    case (.Array, .Array):
+        return lhs.rawArray as NSArray == rhs.rawArray as NSArray
+    case (.Dictionary, .Dictionary):
+        return lhs.rawDictionary as NSDictionary == rhs.rawDictionary as NSDictionary
+    case (.Null, .Null):
+        return true
+    default:
+        return false
     }
-
-    //delete a table
-    func deleteSQLTable(table: String) -> Int? {
-
-        //form the SQLite string for deletion of the table
-        let sqlStr = "DROP TABLE \(table)"
-
-        //execute update to delete table
-        return executeChange(sqlStr)
-    }
-
-    //get existing table names
-    func existingTables() -> (result: [String], error: Int?) {
-        let sqlStr = "SELECT name FROM sqlite_master WHERE type = 'table'"
-        var tableArr = [String]()
-        let results = executeQuery(sqlStr)
-        if let err = results.error {
-            return (tableArr, err)
-        }
-        for row in results.result {
-            if let table = row["name"]?.asString() {
-                tableArr.append(table)
-            } else {
-                print("SwiftData Error -> During: Finding Existing Tables")
-                print("                -> Code: 403 - Error extracting table names from sqlite_master")
-                return (tableArr, 403)
-            }
-        }
-
-        return (tableArr, nil)
-    }
-
-    //create an index
-    func createIndex(name: String, columns: [String], table: String, unique: Bool) -> Int? {
-
-        if columns.count < 1 {
-            print("SwiftData Error -> During: Creating Index")
-            print("                -> Code: 401 - At least one column name must be provided")
-            return 401
-        }
-
-        var sqlStr = ""
-        if unique {
-            sqlStr = "CREATE UNIQUE INDEX \(name) ON \(table) ("
-        } else {
-            sqlStr = "CREATE INDEX \(name) ON \(table) ("
-        }
-        var firstRun = true
-        for column in columns {
-            if firstRun {
-                sqlStr += column
-                firstRun = false
-            } else {
-                sqlStr += ", \(column)"
-            }
-        }
-        sqlStr += ")"
-
-        return executeChange(sqlStr)
-    }
-
-    //remove an index
-    func removeIndex(name: String) -> Int? {
-
-        let sqlStr = "DROP INDEX \(name)"
-
-        return executeChange(sqlStr)
-    }
-
-    //obtain list of existing indexes
-    func existingIndexes() -> (result: [String], error: Int?) {
-
-        let sqlStr = "SELECT name FROM sqlite_master WHERE type = 'index'"
-
-        var indexArr = [String]()
-        let results = executeQuery(sqlStr)
-        if let err = results.error {
-            return (indexArr, err)
-        }
-        for res in results.result {
-            if let index = res["name"]?.asString() {
-                indexArr.append(index)
-            } else {
-                print("SwiftData Error -> During: Finding Existing Indexes")
-                print("                -> Code: 402 - Error extracting index names from sqlite_master")
-                print("Error finding existing indexes -> Error extracting index names from sqlite_master")
-                return (indexArr, 402)
-            }
-        }
-        return (indexArr, nil)
-    }
-
-    //obtain list of existing indexes for a specific table
-    func existingIndexesForTable(table: String) -> (result: [String], error: Int?) {
-
-        let sqlStr = "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = '\(table)'"
-
-        var indexArr = [String]()
-        let results = executeQuery(sqlStr)
-        if let err = results.error {
-            return (indexArr, err)
-        }
-        for res in results.result {
-            if let index = res["name"]?.asString() {
-                indexArr.append(index)
-            } else {
-                print("SwiftData Error -> During: Finding Existing Indexes for a Table")
-                print("                -> Code: 402 - Error extracting index names from sqlite_master")
-                return (indexArr, 402)
-            }
-        }
-        return (indexArr, nil)
-    }
-
 }
 
+public func >=(lhs: JSON, rhs: JSON) -> Bool {
 
-// MARK: - SDError Functions
-
-extension SwiftData.SDError {
-
-    //get the error message from the error code
-    private static func errorMessageFromCode(errorCode: Int) -> String {
-
-        switch errorCode {
-
-        //no error
-
-        case -1:
-            return "No error"
-
-        //SQLite error codes and descriptions as per: http://www.sqlite.org/c3ref/c_abort.html
-        case 0:
-            return "Successful result"
-        case 1:
-            return "SQL error or missing database"
-        case 2:
-            return "Internal logic error in SQLite"
-        case 3:
-            return "Access permission denied"
-        case 4:
-            return "Callback routine requested an abort"
-        case 5:
-            return "The database file is locked"
-        case 6:
-            return "A table in the database is locked"
-        case 7:
-            return "A malloc() failed"
-        case 8:
-            return "Attempt to write a readonly database"
-        case 9:
-            return "Operation terminated by sqlite3_interrupt()"
-        case 10:
-            return "Some kind of disk I/O error occurred"
-        case 11:
-            return "The database disk image is malformed"
-        case 12:
-            return "Unknown opcode in sqlite3_file_control()"
-        case 13:
-            return "Insertion failed because database is full"
-        case 14:
-            return "Unable to open the database file"
-        case 15:
-            return "Database lock protocol error"
-        case 16:
-            return "Database is empty"
-        case 17:
-            return "The database schema changed"
-        case 18:
-            return "String or BLOB exceeds size limit"
-        case 19:
-            return "Abort due to constraint violation"
-        case 20:
-            return "Data type mismatch"
-        case 21:
-            return "Library used incorrectly"
-        case 22:
-            return "Uses OS features not supported on host"
-        case 23:
-            return "Authorization denied"
-        case 24:
-            return "Auxiliary database format error"
-        case 25:
-            return "2nd parameter to sqlite3_bind out of range"
-        case 26:
-            return "File opened that is not a database file"
-        case 27:
-            return "Notifications from sqlite3_log()"
-        case 28:
-            return "Warnings from sqlite3_log()"
-        case 100:
-            return "sqlite3_step() has another row ready"
-        case 101:
-            return "sqlite3_step() has finished executing"
-
-        //custom SwiftData errors
-
-        //->binding errors
-
-        case 201:
-            return "Not enough objects to bind provided"
-        case 202:
-            return "Too many objects to bind provided"
-        case 203:
-            return "Object to bind as identifier must be a String"
-
-        //->custom connection errors
-
-        case 301:
-            return "A custom connection is already open"
-        case 302:
-            return "Cannot open a custom connection inside a transaction"
-        case 303:
-            return "Cannot open a custom connection inside a savepoint"
-        case 304:
-            return "A custom connection is not currently open"
-        case 305:
-            return "Cannot close a custom connection inside a transaction"
-        case 306:
-            return "Cannot close a custom connection inside a savepoint"
-
-        //->index and table errors
-
-        case 401:
-            return "At least one column name must be provided"
-        case 402:
-            return "Error extracting index names from sqlite_master"
-        case 403:
-            return "Error extracting table names from sqlite_master"
-
-        //->transaction and savepoint errors
-
-        case 501:
-            return "Cannot begin a transaction within a savepoint"
-        case 502:
-            return "Cannot begin a transaction within another transaction"
-
-        //unknown error
-
-        default:
-            //what the fuck happened?!?
-            return "Unknown error"
-        }
-
+    switch (lhs.type, rhs.type) {
+    case (.Number, .Number):
+        return lhs.rawNumber >= rhs.rawNumber
+    case (.String, .String):
+        return lhs.rawString >= rhs.rawString
+    case (.Bool, .Bool):
+        return lhs.rawNumber.boolValue == rhs.rawNumber.boolValue
+    case (.Array, .Array):
+        return lhs.rawArray as NSArray == rhs.rawArray as NSArray
+    case (.Dictionary, .Dictionary):
+        return lhs.rawDictionary as NSDictionary == rhs.rawDictionary as NSDictionary
+    case (.Null, .Null):
+        return true
+    default:
+        return false
     }
-
 }
 
-public typealias SD = SwiftData
+public func >(lhs: JSON, rhs: JSON) -> Bool {
 
-extension String {
-    
-    var lastPathComponent: String {
-        
+    switch (lhs.type, rhs.type) {
+    case (.Number, .Number):
+        return lhs.rawNumber > rhs.rawNumber
+    case (.String, .String):
+        return lhs.rawString > rhs.rawString
+    default:
+        return false
+    }
+}
+
+public func <(lhs: JSON, rhs: JSON) -> Bool {
+
+    switch (lhs.type, rhs.type) {
+    case (.Number, .Number):
+        return lhs.rawNumber < rhs.rawNumber
+    case (.String, .String):
+        return lhs.rawString < rhs.rawString
+    default:
+        return false
+    }
+}
+
+private let trueNumber = NSNumber(bool: true)
+private let falseNumber = NSNumber(bool: false)
+private let trueObjCType = String.fromCString(trueNumber.objCType)
+private let falseObjCType = String.fromCString(falseNumber.objCType)
+
+// MARK: - NSNumber: Comparable
+
+extension NSNumber {
+    var isBool:Bool {
         get {
-            return (self as NSString).lastPathComponent
+            let objCType = String.fromCString(self.objCType)
+            if (self.compare(trueNumber) == NSComparisonResult.OrderedSame && objCType == trueObjCType)
+                || (self.compare(falseNumber) == NSComparisonResult.OrderedSame && objCType == falseObjCType){
+                    return true
+            } else {
+                return false
+            }
         }
     }
-    var pathExtension: String {
-        
-        get {
-            
-            return (self as NSString).pathExtension
-        }
+}
+
+func ==(lhs: NSNumber, rhs: NSNumber) -> Bool {
+    switch (lhs.isBool, rhs.isBool) {
+    case (false, true):
+        return false
+    case (true, false):
+        return false
+    default:
+        return lhs.compare(rhs) == NSComparisonResult.OrderedSame
     }
-    var stringByDeletingLastPathComponent: String {
-        
-        get {
-            
-            return (self as NSString).stringByDeletingLastPathComponent
-        }
+}
+
+func !=(lhs: NSNumber, rhs: NSNumber) -> Bool {
+    return !(lhs == rhs)
+}
+
+func <(lhs: NSNumber, rhs: NSNumber) -> Bool {
+
+    switch (lhs.isBool, rhs.isBool) {
+    case (false, true):
+        return false
+    case (true, false):
+        return false
+    default:
+        return lhs.compare(rhs) == NSComparisonResult.OrderedAscending
     }
-    var stringByDeletingPathExtension: String {
-        
-        get {
-            
-            return (self as NSString).stringByDeletingPathExtension
-        }
+}
+
+func >(lhs: NSNumber, rhs: NSNumber) -> Bool {
+
+    switch (lhs.isBool, rhs.isBool) {
+    case (false, true):
+        return false
+    case (true, false):
+        return false
+    default:
+        return lhs.compare(rhs) == NSComparisonResult.OrderedDescending
     }
-    var pathComponents: [String] {
-        
-        get {
-            
-            return (self as NSString).pathComponents
-        }
+}
+
+func <=(lhs: NSNumber, rhs: NSNumber) -> Bool {
+
+    switch (lhs.isBool, rhs.isBool) {
+    case (false, true):
+        return false
+    case (true, false):
+        return false
+    default:
+        return lhs.compare(rhs) != NSComparisonResult.OrderedDescending
     }
-    
-    func stringByAppendingPathComponent(path: String) -> String {
-        
-        let nsSt = self as NSString
-        
-        return nsSt.stringByAppendingPathComponent(path)
-    }
-    
-    func stringByAppendingPathExtension(ext: String) -> String? {
-        
-        let nsSt = self as NSString
-        
-        return nsSt.stringByAppendingPathExtension(ext)
+}
+
+func >=(lhs: NSNumber, rhs: NSNumber) -> Bool {
+
+    switch (lhs.isBool, rhs.isBool) {
+    case (false, true):
+        return false
+    case (true, false):
+        return false
+    default:
+        return lhs.compare(rhs) != NSComparisonResult.OrderedAscending
     }
 }
